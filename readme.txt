@@ -44,6 +44,9 @@ No questions so far, but don't hesitate to ask!
 
 == Changelog ==
 
+= 1.5.6 - TBD =
+* User type assignment support for social login registration - ADDED
+
 = 1.5.5 - 2025-12-03 =
 * Update the documentation links for all providers in settings - CHANGED
 
