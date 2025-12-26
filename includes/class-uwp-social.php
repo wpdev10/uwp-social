@@ -168,7 +168,7 @@ class UsersWP_Social {
 		    }, 10);
 
 		    ob_start();
-		    echo do_shortcode('[uwp_social type="register" redirect_to="'.$redirect_to.'"]');
+		    echo do_shortcode('[uwp_social type="register" form_id="'.$form_id.'" redirect_to="'.$redirect_to.'"]');
 		    echo ob_get_clean();
 	    } else {
 		    $data = array();
@@ -429,10 +429,9 @@ class UsersWP_Social {
      * @return string Modified URL.
      */
     public function add_form_id_to_social_url($url, $provider_id, $args) {
-        $form_id = (int) apply_filters('uwp_social_register_form_id', 0);
+        $form_id = ! empty( $args['form_id'] ) ? absint( $args['form_id'] ) : 1;
         
-        if ( ! empty( $form_id ) ) {
-            $form_id = absint( $form_id );
+        if ( $form_id > 0 ) {
             $url = add_query_arg( 'uwp_register_form_id', $form_id, $url );
         }
         
