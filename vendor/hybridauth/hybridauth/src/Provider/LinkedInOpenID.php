@@ -76,7 +76,7 @@ class LinkedInOpenID extends OAuth2
         $userProfile->lastName = $data->get('family_name');
         $userProfile->identifier = $data->get('sub');
         $userProfile->email = $data->get('email');
-        $userProfile->emailVerified = $data->get('email_verified');
+        $userProfile->emailVerified = $data->get('email_verified') ? $userProfile->email : '';
         $userProfile->displayName = $data->get('name');
         $userProfile->photoURL = $data->get('picture');
 
