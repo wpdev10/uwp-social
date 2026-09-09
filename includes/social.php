@@ -226,11 +226,19 @@ function uwp_social_get_provider_adapter( $provider_id ) {
  * Resolve the provider-confirmed email address for a hybridauth profile.
  *
  * `emailVerified` is treated strictly as a "the provider vouches this
- * identity owns the address" flag, never as a fallback value. It is only
- * honoured when the provider echoes back the exact same address that was
- * asserted as the account email; any other value (empty, a boolean, a
- * mismatched address, etc.) means "not confirmed" and the raw, unconfirmed
- * email must NOT be used to resolve or authenticate an existing account.
+ * identity owns the address" flag, never as a fallback value. Bundled
+ * hybridauth adapters normalise this field inconsistently across providers,
+ * so both shapes seen in the wild are handled here rather than by patching
+ * adapters under vendor/ (which would be lost on a library update):
+ *
+ *   - a plain boolean (e.g. LinkedIn OIDC's raw `email_verified` claim):
+ *     `true` confirms the profile's own `email` field, `false`/absent does not.
+ *   - a string (Google/WordPress.com style): only confirms when it's a valid
+ *     email AND matches the profile's `email` field exactly. Anything else
+ *     (empty, a mismatched address) means "not confirmed".
+ *
+ * Either way, the raw, unconfirmed email must NOT be used to resolve or
+ * authenticate an existing account.
  *
  * @param object $hybridauth_user_profile Hybridauth user profile object.
  * @param string $hybridauth_user_email   Sanitized raw email from the profile.
@@ -242,11 +250,17 @@ function uwp_social_get_verified_email( $hybridauth_user_profile, $hybridauth_us
 		return '';
 	}
 
-	if ( empty( $hybridauth_user_profile->emailVerified ) || ! is_email( $hybridauth_user_profile->emailVerified ) ) {
+	$email_verified = isset( $hybridauth_user_profile->emailVerified ) ? $hybridauth_user_profile->emailVerified : null;
+
+	if ( is_bool( $email_verified ) ) {
+		return $email_verified ? $hybridauth_user_email : '';
+	}
+
+	if ( empty( $email_verified ) || ! is_email( $email_verified ) ) {
 		return '';
 	}
 
-	$asserted_verified_email = sanitize_email( $hybridauth_user_profile->emailVerified );
+	$asserted_verified_email = sanitize_email( $email_verified );
 
 	if ( strtolower( $asserted_verified_email ) !== strtolower( $hybridauth_user_email ) ) {
 		return '';
