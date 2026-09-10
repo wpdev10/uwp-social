@@ -44,9 +44,17 @@ class UsersWP_Social {
         add_action('uwp_clear_user_php_session', 'uwp_social_destroy_session_data');
         add_action('wp_logout', 'uwp_social_destroy_session_data');
 
+        // Security-critical DB remediation (CVE-2026-86814 follow-up): run on
+        // every request, not just wp-admin visits, so a site that auto-updates
+        // in the background isn't left with a live exploited link until an
+        // admin happens to log in. The check itself is a cheap version_compare
+        // once purged, so this is a no-op on every request after the first.
+        add_action('init', array($this, 'security_upgrade'), 5);
+
         if(is_admin()){
             add_action( 'admin_init', array( $this, 'activation_redirect' ) );
             add_action('admin_init', array($this, 'automatic_upgrade'));
+            add_action('admin_notices', array($this, 'unverified_links_purged_notice'));
             add_filter( 'uwp_get_settings_pages', array( $this, 'get_settings_pages' ), 10, 1 );
         }
 
@@ -110,6 +118,90 @@ class UsersWP_Social {
             add_action('wp_ajax_nopriv_uwp_social_dismiss_authuri_notice', array($this, 'dismiss_notice'));
             add_action('wp_ajax_uwp_social_dismiss_authuri_notice', array($this, 'dismiss_notice'));
         }
+    }
+
+    /**
+     * Security-critical DB remediation, run on every request (not just
+     * wp-admin) so it can't sit waiting for an admin to log in. See
+     * purge_unverified_social_links() for what/why.
+     */
+    public function security_upgrade() {
+        $uwp_social_version = get_option( 'uwp_social_db_version' );
+
+        // CVE-2026-86814 follow-up: a link created before 1.5.11, while the
+        // plugin trusted an unconfirmed provider email, still lets a repeat
+        // login resolve straight to the victim account after updating -- the
+        // provider-identifier lookup in uwp_get_social_profile() runs first
+        // and unconditionally, without re-checking email verification. Purge
+        // those links once so the fixed verification logic actually gets a
+        // chance to run instead of being bypassed by a pre-existing row.
+        if ( empty( $uwp_social_version ) || version_compare( $uwp_social_version, '1.5.11', '<' ) ) {
+            self::purge_unverified_social_links();
+            update_option( 'uwp_social_db_version', UWP_SOCIAL_VERSION );
+        }
+    }
+
+    /**
+     * Delete uwp_social_profiles rows whose stored `emailverified` value
+     * isn't a genuine match for the profile's raw `email`.
+     *
+     * Under the fixed logic in uwp_social_get_verified_email(), a link can
+     * only be trusted going forward when the provider echoed back the same
+     * address it asserted (or, for boolean-style adapters, explicitly
+     * confirmed it) -- i.e. when `emailverified` equals `email`. Any row
+     * that doesn't meet that bar could only have gotten in either via the
+     * pre-fix vulnerability (resolving/creating a link from an unconfirmed
+     * email) or via a provider that never asserts a verified address at
+     * all. Either way we can no longer distinguish "safely linked earlier"
+     * from "planted by an attacker" after the fact, so the safe default is
+     * to drop the link and let the user re-establish it: a real owner can
+     * simply log in again (auto-relinked if their email verifies, or via
+     * the password-based account-linking screen otherwise); an attacker's
+     * planted identifier link is gone and can't bypass the new check.
+     *
+     * Runs once per site via security_upgrade(), gated on uwp_social_db_version.
+     */
+    public static function purge_unverified_social_links() {
+        global $wpdb;
+
+        $table = $wpdb->base_prefix . 'uwp_social_profiles';
+
+        if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) !== $table ) {
+            return;
+        }
+
+        $deleted = $wpdb->query(
+            "DELETE FROM `{$table}` WHERE emailverified = '' OR LOWER(emailverified) != LOWER(email)"
+        );
+
+        if ( $deleted ) {
+            update_option( 'uwp_social_unverified_links_purged', array(
+                'count' => (int) $deleted,
+                'time'  => time(),
+            ) );
+        }
+    }
+
+    /**
+     * One-time admin notice reporting the purge_unverified_social_links()
+     * cleanup, so a site owner knows some users may need to re-link their
+     * social account (via login, or the password-based linking screen).
+     */
+    public function unverified_links_purged_notice() {
+        $purged = get_option( 'uwp_social_unverified_links_purged' );
+
+        if ( empty( $purged ) || empty( $purged['count'] ) ) {
+            return;
+        }
+        ?>
+        <div class="notice notice-warning is-dismissible">
+            <p><?php echo sprintf(
+                esc_html__( 'UsersWP Social Login: as part of the fix for CVE-2026-86814, %d existing social login link(s) with an unconfirmed email were removed. Affected users will be asked to log in again (or link their account via password) the next time they use social login.', 'uwp-social' ),
+                (int) $purged['count']
+            ); ?></p>
+        </div>
+        <?php
+        delete_option( 'uwp_social_unverified_links_purged' );
     }
 
     public function register_widgets($widgets){
